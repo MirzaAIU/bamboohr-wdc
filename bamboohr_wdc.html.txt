@@ -1,0 +1,119 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="utf-8" />
+  <title>BambooHR WDC</title>
+  <script src="https://connectors.tableau.com/libs/tableauwdc-2.4.latest.min.js"></script>
+  <style>
+    body { font-family: sans-serif; max-width: 720px; margin: 24px auto; }
+    input, textarea, button { width:100%; padding:10px; margin:8px 0; }
+    small { color:#666; }
+  </style>
+</head>
+<body>
+  <h2>BambooHR → Tableau (Employees)</h2>
+
+  <label>Subdomain:</label>
+  <input id="subdomain" placeholder="e.g. aiu if your site is aiu.bamboohr.com" />
+
+  <label>API Key:</label>
+  <input id="apiKey" placeholder="paste your BambooHR API key" />
+
+  <label>Fields (comma-separated):</label>
+  <textarea id="fields" rows="5">id,firstName,lastName,status,jobTitle,department,division,employmentStatus,hireDate,terminationDate,gender,dateOfBirth,age,degree,nationality,terminationTypeId,terminationStatusId,payRate</textarea>
+  <small>You can change this list later.</small>
+
+  <button id="btnGetData">Get Data in Tableau</button>
+
+  <script>
+  (function () {
+    var myConnector = tableau.makeConnector();
+
+    myConnector.getSchema = function (schemaCallback) {
+      const cols = [
+        { id: "id", dataType: tableau.dataTypeEnum.string },
+        { id: "firstName", dataType: tableau.dataTypeEnum.string },
+        { id: "lastName", dataType: tableau.dataTypeEnum.string },
+        { id: "status", dataType: tableau.dataTypeEnum.string },
+        { id: "jobTitle", dataType: tableau.dataTypeEnum.string },
+        { id: "department", dataType: tableau.dataTypeEnum.string },
+        { id: "division", dataType: tableau.dataTypeEnum.string },
+        { id: "employmentStatus", dataType: tableau.dataTypeEnum.string },
+        { id: "hireDate", dataType: tableau.dataTypeEnum.date },
+        { id: "terminationDate", dataType: tableau.dataTypeEnum.date },
+        { id: "gender", dataType: tableau.dataTypeEnum.string },
+        { id: "dateOfBirth", dataType: tableau.dataTypeEnum.date },
+        { id: "age", dataType: tableau.dataTypeEnum.int },
+        { id: "degree", dataType: tableau.dataTypeEnum.string },
+        { id: "nationality", dataType: tableau.dataTypeEnum.string },
+        { id: "terminationTypeId", dataType: tableau.dataTypeEnum.string },
+        { id: "terminationStatusId", dataType: tableau.dataTypeEnum.string },
+        { id: "payRate", dataType: tableau.dataTypeEnum.string }
+      ];
+      schemaCallback([{ id: "bamboohrEmployees", alias: "BambooHR Employees", columns: cols }]);
+    };
+
+    myConnector.getData = function (table, done) {
+      const cfg = JSON.parse(tableau.connectionData || "{}");
+      const subdomain = cfg.subdomain;
+      const apiKey = cfg.apiKey;
+      const fields = cfg.fields || [];
+
+      const headers = {
+        "Accept": "application/json",
+        "Authorization": "Basic " + btoa(apiKey + ":x")
+      };
+
+      const dirUrl = `https://api.bamboohr.com/api/gateway.php/${subdomain}/v1/employees/directory`;
+
+      fetch(dirUrl, { headers })
+        .then(r => r.ok ? r.json() : Promise.reject("Directory " + r.status))
+        .then(j => {
+          const ids = (j.employees || []).map(e => e.id);
+          let rows = [];
+          let i = 0;
+
+          function fetchOne() {
+            if (i >= ids.length) {
+              if (rows.length) table.appendRows(rows);
+              done();
+              return;
+            }
+            const id = ids[i++];
+            const url = `https://api.bamboohr.com/api/gateway.php/${subdomain}/v1/employees/${id}?fields=${encodeURIComponent(fields.join(","))}`;
+            fetch(url, { headers })
+              .then(r => r.ok ? r.json() : Promise.reject("Emp " + id + " " + r.status))
+              .then(emp => {
+                const row = { id: id.toString() };
+                fields.forEach(f => {
+                  let v = emp[f];
+                  if (v && typeof v === 'object' && !Array.isArray(v)) v = v.value || v.id || JSON.stringify(v);
+                  row[f] = v ?? null;
+                });
+                rows.push(row);
+                if (rows.length >= 500) { table.appendRows(rows); rows = []; }
+                fetchOne();
+              })
+              .catch(() => fetchOne()); // skip failures, continue
+          }
+          fetchOne();
+        })
+        .catch(err => tableau.abortWithError("Failed to fetch BambooHR data: " + err));
+    };
+
+    tableau.registerConnector(myConnector);
+
+    window.addEventListener("load", function () {
+      document.getElementById("btnGetData").addEventListener("click", function () {
+        const subdomain = document.getElementById("subdomain").value.trim();
+        const apiKey = document.getElementById("apiKey").value.trim();
+        const fields = document.getElementById("fields").value.split(/\s*,\s*/).filter(Boolean);
+        tableau.connectionData = JSON.stringify({ subdomain, apiKey, fields });
+        tableau.connectionName = `BambooHR Employees (${subdomain})`;
+        tableau.submit();
+      });
+    });
+  })();
+  </script>
+</body>
+</html>
